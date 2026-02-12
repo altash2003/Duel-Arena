@@ -314,6 +314,10 @@
                     <option value="5_race">Race to 5</option>
                 </select>
                 <button onclick="resetMatch()" class="reset-btn">RESET</button>
+                <button class="reset-btn" id="btnTopup">TOPUP</button>
+                <button class="reset-btn" id="btnWithdraw">WITHDRAW</button>
+                <button class="reset-btn" id="btnSupport">SUPPORT</button>
+                <button class="reset-btn" id="btnAdmin" style="display:none;">ADMIN</button>
             </div>
         </div>
 
@@ -787,7 +791,7 @@
       $("#activePlayers") || $("#active-players") || $(".active-players") || $(".players-list") || $("#playersList");
     if(!container) return;
     // Preserve styling by only filling items
-    const rows = (list||[]).map(u => `<div class="player-row"><span class="player-name">${u.username}</span></div>`).join("");
+    const rows = (list||[]).map(u => `<div class="player-row"><span class="player-name">${u.username}${u.mic?` <i class="fa-solid fa-microphone" style="color:var(--accent)"></i>`:""}</span></div>`).join("");
     safeHTML(container, rows || `<div class="player-row"><span class="player-name">No players online</span></div>`);
   }
 
@@ -854,6 +858,7 @@
     async function myBalance(){
       try{
         const me = await API.req("/api/me");
+  if (me?.user?.role === 'admin') { const b=document.getElementById('btnAdmin'); if (b) b.style.display='inline-block'; }
         const el = $("#walletBalance") || $("#wallet-balance") || $(".wallet-balance");
         if(el) el.textContent = `${me.balance} TC`;
       }catch{}
@@ -873,6 +878,20 @@
   await API.req("/api/me");
 
   const socket = connectRealtime();
+
+  // quick nav
+  const go = (p)=> (window.location.href = p);
+  document.getElementById('btnTopup')?.addEventListener('click', ()=>go('/topup.html'));
+  document.getElementById('btnWithdraw')?.addEventListener('click', ()=>go('/withdraw.html'));
+  document.getElementById('btnSupport')?.addEventListener('click', ()=>go('/support.html'));
+  document.getElementById('btnAdmin')?.addEventListener('click', ()=>go('/admin.html'));
+
+  // clear any mockup placeholders (so only realtime shows)
+  const ap = document.querySelector('#activePlayers') || document.querySelector('#playersList') || document.querySelector('.players-list') || document.querySelector('.active-players');
+  if (ap) ap.innerHTML = '<div class="player-row"><span class="player-name">Connecting...</span></div>';
+  const cb = document.querySelector('#chatMessages') || document.querySelector('#chatBox') || document.querySelector('.chat-messages');
+  if (cb) cb.innerHTML = '';
+
   bindChat(socket);
   bindActions(socket);
 
@@ -880,6 +899,8 @@
     renderOnline(st.online);
     renderHistory(st.duel.round);
   });
+
+  window.addEventListener('beforeunload', ()=>{ try{ socket.emit('voice:status', false);}catch{} });
 </script>
 </body>
 </html>

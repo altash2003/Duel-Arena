@@ -169,6 +169,7 @@ function auditLog({ actor_user_id=null, actor_username=null, action, target_user
 
 // ---- Realtime (socket.io) ----
 const ONLINE_USERS = new Map(); // userId -> { userId, username, role, socketIds:Set }
+const VOICE_ON = new Set(); // userIds currently sharing mic
 const DUEL = {
   roomId: "duel:lobby",
   left: null,
@@ -180,7 +181,7 @@ const DUEL = {
 
 function pushChat(msg) { DUEL.chat.push(msg); if (DUEL.chat.length > 100) DUEL.chat.shift(); }
 function publicState() {
-  const online = Array.from(ONLINE_USERS.values()).map(u => ({ id: u.userId, username: u.username, role: u.role }));
+  const online = Array.from(ONLINE_USERS.values()).map(u => ({ id: u.userId, username: u.username, role: u.role, mic: VOICE_ON.has(u.userId) }));
   return { online, duel: { left: DUEL.left, right: DUEL.right, spectators: Array.from(DUEL.spectators), round: {
     id: DUEL.round.id, status: DUEL.round.status, hpLeft: DUEL.round.hpLeft, hpRight: DUEL.round.hpRight, winner: DUEL.round.winner,
     betTotals: { left: DUEL.round.bets.left.reduce((a,b)=>a+b.amount,0), right: DUEL.round.bets.right.reduce((a,b)=>a+b.amount,0) }
@@ -262,6 +263,8 @@ io.on("connection", (socket) => {
   emitState();
 
   socket.on("disconnect", () => {
+    VOICE_ON.delete(userId);
+
     const e = ONLINE_USERS.get(userId);
     if (e) { e.socketIds.delete(socket.id); if (e.socketIds.size === 0) ONLINE_USERS.delete(userId); }
     DUEL.spectators.delete(userId);
@@ -270,7 +273,15 @@ io.on("connection", (socket) => {
     emitState();
   });
 
-  socket.on("chat:send", (text) => {
+  
+  socket.on("voice:status", (on) => {
+    const enabled = !!on;
+    if (enabled) VOICE_ON.add(userId);
+    else VOICE_ON.delete(userId);
+    emitState();
+  });
+
+socket.on("chat:send", (text) => {
     const t = (text || "").toString().slice(0, 300).trim();
     if (!t) return;
     const msg = { userId, username, text: t, ts: Date.now() };
@@ -359,9 +370,8 @@ app.post("/api/auth/signup", async (req, res) => {
 
   // first user becomes admin (house)
   const count = db.prepare("SELECT COUNT(*) AS c FROM users").get().c;
-  const role = count === 0 ? "admin" : "user";
-
-  const info = db
+  const role = 'user';
+const info = db
     .prepare("INSERT INTO users (username, pass_hash, balance, role) VALUES (?, ?, ?, ?)")
     .run(username, pass_hash, 1000, role);
 
@@ -862,6 +872,20 @@ app.post("/api/admin/adjust-balance", authRequired, adminOnly, (req, res) => {
 
 // ---- Static ----
 const publicDir = path.join(__dirname, "public");
+// One-time admin promotion (do NOT expose this key)
+// Set ADMIN_SETUP_KEY in Railway env, then call this endpoint once.
+app.post("/api/admin/promote", authRequired, (req, res) => {
+  const key = (req.body?.key || "").toString();
+  if (!process.env.ADMIN_SETUP_KEY) return jsonError(res, 400, "ADMIN_SETUP_KEY not set");
+  if (key !== process.env.ADMIN_SETUP_KEY) return jsonError(res, 403, "Forbidden");
+
+  // promote the currently logged-in user
+  db.prepare("UPDATE users SET role='admin' WHERE id=?").run(req.user.sub);
+  auditLog({ actor_user_id: req.user.sub, actor_username: req.user.username, action: "admin_promote", target_user_id: req.user.sub, req, meta: {} });
+
+  res.json({ ok: true, role: "admin" });
+});
+
 app.use(express.static(publicDir, { extensions: ["html"] }));
 
 // SPA-ish fallback for "/" (serve index.html)
