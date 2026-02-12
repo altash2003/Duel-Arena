@@ -1,20 +1,12 @@
 {
-  "name": "casino-duel-arena",
+  "name": "duel-arena",
   "version": "1.0.0",
-  "private": true,
-  "type": "module",
+  "description": "Duel Arena Game",
+  "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.5.0",
-    "cookie-parser": "^1.4.6",
-    "express": "^4.19.2",
-    "helmet": "^7.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "morgan": "^1.10.0",
-    "socket.io": "^4.7.5"
+    "express": "^4.18.2"
   }
 }
