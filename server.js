@@ -867,5 +867,4 @@ app.use(express.static(publicDir, { extensions: ["html"] }));
 // SPA-ish fallback for "/" (serve index.html)
 app.get("/", (req, res) => res.sendFile(path.join(publicDir, "index.html")));
 
-});
 server.listen(PORT, () => console.log('Server listening on', PORT));

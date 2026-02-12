@@ -314,13 +314,6 @@
                     <option value="5_race">Race to 5</option>
                 </select>
                 <button onclick="resetMatch()" class="reset-btn">RESET</button>
-
-            <div class="settings-group" style="gap:8px;">
-                <button class="reset-btn" onclick="goTopup()" style="background:#2ecc71;">TOPUP</button>
-                <button class="reset-btn" onclick="goWithdraw()" style="background:#ff9f43;">WITHDRAW</button>
-                <button class="reset-btn" onclick="logout()" style="background:#576574;">LOGOUT</button>
-            </div>
-
             </div>
         </div>
 
@@ -431,7 +424,7 @@
         tempData: {}, isGameOver: false, isBusy: false, coinRot: 0,
         seats: { p1: false, p2: false } 
     };
-    const spec = { money: 0, betOn: null, betAmount: 0, locked: false };
+    const spec = { money: 1000, betOn: null, betAmount: 0, locked: false };
     const voice = { mode: 'ptt', isTalking: false, stream: null, audioContext: null, analyser: null }; 
 
     const DOM = {
@@ -446,54 +439,6 @@
         p1Name: document.getElementById('p1Name'), p2Name: document.getElementById('p2Name'),
         myMic: document.getElementById('myMic')
     };
-    // ---- AUTH / API ----
-    const API = {
-        token: localStorage.getItem("token") || null,
-        user: null,
-        async req(path, opts = {}) {
-            const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
-            if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
-            const res = await fetch(path, { ...opts, headers });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data?.error || "Request failed");
-            return data;
-        },
-        async loadMe() {
-            if (!this.token) return null;
-            const { user } = await this.req("/api/me");
-            this.user = user;
-            return user;
-        },
-        async loadWallet() {
-            const { balance } = await this.req("/api/wallet");
-            return balance;
-        },
-        async syncWalletToUI() {
-            const bal = await this.loadWallet();
-            spec.money = bal;
-            DOM.wallet.innerText = `WALLET: ${spec.money} TC`;
-            return bal;
-        }
-    };
-
-    function logout() {
-        localStorage.removeItem("token");
-        window.location.href = "/login.html";
-    }
-    function goTopup(){ window.location.href="/topup.html"; }
-    function goWithdraw(){ window.location.href="/withdraw.html"; }
-
-    async function requireLogin() {
-        try {
-            if (!API.token) throw new Error("Missing token");
-            await API.loadMe();
-            await API.syncWalletToUI();
-        } catch (e) {
-            localStorage.removeItem("token");
-            window.location.href = "/login.html";
-        }
-    }
-
 
     /* --- VOICE CHAT --- */
     function toggleMicMode() {
@@ -613,65 +558,40 @@
         document.getElementById('betP2Btn').classList.toggle('selected', player===2);
     }
 
-        async function placeSpectatorBet() {
-        try {
-            const amt = parseInt(DOM.betInput.value);
-            if(!spec.betOn) { alert("Select a Player first!"); return; }
-            if(isNaN(amt) || amt <= 0) { alert("Invalid amount"); return; }
+    function placeSpectatorBet() {
+        const amt = parseInt(DOM.betInput.value);
+        if(!spec.betOn) { alert("Select a Player first!"); return; }
+        if(isNaN(amt) || amt <= 0) { alert("Invalid amount"); return; }
+        if(amt > spec.money) { alert("Insufficient funds"); return; }
 
-            // server-side lock (subtract from wallet)
-            const resp = await API.req("/api/bet/lock", {
-                method: "POST",
-                body: JSON.stringify({ amount: amt })
-            });
-
-            spec.betAmount = amt;
-            spec.money = resp.balance;
-            spec.locked = true;
-
-            DOM.wallet.innerText = `WALLET: ${spec.money} TC`;
-            DOM.betStatus.innerText = `LOCKED: ${amt} TC on P${spec.betOn}`;
-            DOM.betStatus.style.color = spec.betOn===1 ? 'var(--p1-color)' : 'var(--p2-color)';
-
-            DOM.placeBtn.disabled = true;
-            DOM.betInput.disabled = true;
-            document.getElementById('betP1Btn').disabled = true;
-            document.getElementById('betP2Btn').disabled = true;
-        } catch (e) {
-            alert(e.message || "Could not place bet");
-        }
+        spec.betAmount = amt;
+        spec.money -= amt;
+        spec.locked = true;
+        
+        DOM.wallet.innerText = `WALLET: ${spec.money} TC`;
+        DOM.betStatus.innerText = `LOCKED: ${amt} TC on P${spec.betOn}`;
+        DOM.betStatus.style.color = spec.betOn===1 ? 'var(--p1-color)' : 'var(--p2-color)';
+        
+        DOM.placeBtn.disabled = true;
+        DOM.betInput.disabled = true;
+        document.getElementById('betP1Btn').disabled = true;
+        document.getElementById('betP2Btn').disabled = true;
     }
 
-        async function resolveSpectatorBet(winner) {
+    function resolveSpectatorBet(winner) {
         if(!spec.locked) return;
-
+        
         let msg = "";
-        try {
-            if(spec.betOn === winner) {
-                const winAmt = spec.betAmount * 2;
-
-                // server-side payout
-                const resp = await API.req("/api/bet/payout", {
-                    method: "POST",
-                    body: JSON.stringify({ amount: winAmt })
-                });
-
-                spec.money = resp.balance;
-                msg = `WON ${winAmt} TC!`;
-                DOM.betStatus.style.color = '#2ecc71';
-            } else {
-                // loss already deducted when bet was placed
-                msg = `LOST ${spec.betAmount} TC.`;
-                DOM.betStatus.style.color = '#ff4757';
-                // sync just in case
-                await API.syncWalletToUI();
-            }
-        } catch (e) {
-            msg = "BET RESOLVE ERROR (SYNCING WALLET)";
+        if(spec.betOn === winner) {
+            const winAmt = spec.betAmount * 2;
+            spec.money += winAmt;
+            msg = `WON ${winAmt} TC!`;
+            DOM.betStatus.style.color = '#2ecc71';
+        } else {
+            msg = `LOST ${spec.betAmount} TC.`;
             DOM.betStatus.style.color = '#ff4757';
-            try { await API.syncWalletToUI(); } catch {}
         }
-
+        
         DOM.wallet.innerText = `WALLET: ${spec.money} TC`;
         DOM.betStatus.innerText = msg;
 
@@ -846,54 +766,120 @@
     function cTTT(i){ if(state.tempData.bd[i] || state.isBusy) return; setBusy(true); let s=state.turn===1?'X':'O'; state.tempData.bd[i]=s; rTTT(); if(kTTT(s)){ updateStatus(`P${state.turn} WINS ROUND!`); awardPoint(state.turn); setTimeout(()=>{ setBusy(false); setGame('ttt'); },1500); return; } if(!state.tempData.bd.includes(null)){ updateStatus("DRAW! RESETTING."); setTimeout(()=>{ setBusy(false); setGame('ttt'); },1500); return; } setBusy(false); updateTurn(state.turn===1?2:1); }
     function kTTT(s){ const w=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]]; return w.some(c=>state.tempData.bd[c[0]]==s&&state.tempData.bd[c[1]]==s&&state.tempData.bd[c[2]]==s); }
 
-    // Boot
-    requireLogin().then(() => {
-        // if admin, show Admin Panel button
-        try {
-            if (API.user && API.user.role === 'admin') {
-                const grp = document.querySelector('.settings-group');
-                if (grp && !document.getElementById('adminBtn')) {
-                    const b = document.createElement('button');
-                    b.id = 'adminBtn';
-                    b.className = 'reset-btn';
-                    b.textContent = 'ADMIN';
-                    b.style.background = '#54a0ff';
-                    b.onclick = () => (window.location.href = '/admin.html');
-                    grp.prepend(b);
-                }
-            }
-        } catch {}
-
-        // show username in the Players Online list label "You (Admin)" as your username
-        try {
-            const youRow = document.querySelector(".player-list .player-item .player-name");
-            if (youRow && API.user) youRow.textContent = `${API.user.username} (${API.user.role === 'admin' ? 'Admin' : 'You'})`;
-        } catch {}
-    });
-
 </script>
-
-<script>
-  // NOTE: This only deters casual users. It cannot truly stop DevTools.
-  document.addEventListener('contextmenu', e => e.preventDefault());
-  document.addEventListener('keydown', (e) => {
-    const k = (e.key || '').toLowerCase();
-    if (k === 'f12') { e.preventDefault(); e.stopPropagation(); return; }
-    if (e.ctrlKey && (k === 'u' || k === 's')) { e.preventDefault(); e.stopPropagation(); return; }
-    if (e.ctrlKey && e.shiftKey && (k === 'i' || k === 'j' || k === 'c')) { e.preventDefault(); e.stopPropagation(); return; }
-  });
-</script>
-
 
 <script type="module">
-import { API, requireLogin } from "/assets/client.js";
-import { connectRealtime } from "/assets/realtime.js";
-let socket=null;
-requireLogin().then(async ()=>{
+  import { API, requireLogin } from "/assets/client.js";
+  import { connectRealtime } from "/assets/realtime.js";
+
+  // This script ONLY wires realtime data into the existing UI.
+  // It does NOT change your layout. It will look for common IDs/classes and fill them if present.
+
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+  function safeText(el, t){ if(el) el.textContent = t; }
+  function safeHTML(el, h){ if(el) el.innerHTML = h; }
+
+  function renderOnline(list){
+    // Try common containers used in the mockup:
+    const container =
+      $("#activePlayers") || $("#active-players") || $(".active-players") || $(".players-list") || $("#playersList");
+    if(!container) return;
+    // Preserve styling by only filling items
+    const rows = (list||[]).map(u => `<div class="player-row"><span class="player-name">${u.username}</span></div>`).join("");
+    safeHTML(container, rows || `<div class="player-row"><span class="player-name">No players online</span></div>`);
+  }
+
+  function renderHistory(round){
+    const el = $("#roundStatus") || $("#round-status") || $(".round-status");
+    if(!el) return;
+    safeText(el, `Round #${round.id} - ${round.status.toUpperCase()}${round.winner?(" | Winner: "+round.winner.toUpperCase()):""}`);
+  }
+
+  function bindChat(socket){
+    const box = $("#chatMessages") || $("#chat-messages") || $(".chat-messages") || $("#chatBox");
+    const input = $("#chatInput") || $("#chat-input") || $("input[name='chat']") || $("#messageInput");
+    const sendBtn = $("#chatSend") || $("#chat-send") || $("#sendBtn");
+
+    function addMsg(m){
+      if(!box) return;
+      const line = document.createElement("div");
+      line.className = "chat-line";
+      line.textContent = m.system ? `[SYSTEM] ${m.text}` : `${m.username}: ${m.text}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    socket.on("chat:init", (arr)=>{ if(box) box.innerHTML=""; (arr||[]).forEach(addMsg); });
+    socket.on("chat:msg", addMsg);
+
+    if(sendBtn && input){
+      sendBtn.addEventListener("click", ()=>{
+        const t = (input.value||"").trim();
+        if(!t) return;
+        socket.emit("chat:send", t);
+        input.value="";
+      });
+    }
+    if(input){
+      input.addEventListener("keydown",(e)=>{
+        if(e.key==="Enter"){
+          const t=(input.value||"").trim();
+          if(!t) return;
+          socket.emit("chat:send", t);
+          input.value="";
+        }
+      });
+    }
+  }
+
+  function bindActions(socket){
+    // Seat buttons if present
+    const left = $("#seatLeft") || $("#seat-left") || $(".seat-left");
+    const right = $("#seatRight") || $("#seat-right") || $(".seat-right");
+    const leave = $("#seatLeave") || $("#seat-leave") || $(".seat-leave");
+    if(left) left.addEventListener("click",()=>socket.emit("duel:seat","left"));
+    if(right) right.addEventListener("click",()=>socket.emit("duel:seat","right"));
+    if(leave) leave.addEventListener("click",()=>socket.emit("duel:seat","leave"));
+
+    // Attack button if present
+    const attack = $("#attackBtn") || $("#attack") || $(".attack-btn");
+    if(attack) attack.addEventListener("click",()=>socket.emit("duel:attack"));
+
+    // Betting buttons if present
+    const betLeft = $("#betLeft") || $("#bet-left") || $(".bet-left");
+    const betRight = $("#betRight") || $("#bet-right") || $(".bet-right");
+    const betAmt = $("#betAmount") || $("#bet-amount") || $("input[name='betAmount']");
+    async function myBalance(){
+      try{
+        const me = await API.req("/api/me");
+        const el = $("#walletBalance") || $("#wallet-balance") || $(".wallet-balance");
+        if(el) el.textContent = `${me.balance} TC`;
+      }catch{}
+    }
+    const place = (side)=>{
+      const amt = Number((betAmt && betAmt.value) ? betAmt.value : 0);
+      if(!Number.isInteger(amt) || amt<=0) return alert("Enter valid bet amount");
+      socket.emit("bet:place",{side, amount: amt});
+    };
+    if(betLeft) betLeft.addEventListener("click",()=>place("left"));
+    if(betRight) betRight.addEventListener("click",()=>place("right"));
+    socket.on("wallet:update",(w)=>{ const el=$("#walletBalance")||$("#wallet-balance")||$(".wallet-balance"); if(el) el.textContent = `${w.balance} TC`; });
+    myBalance();
+  }
+
+  await requireLogin();
   await API.req("/api/me");
-  socket = connectRealtime();
-  socket.on("state", (st)=> { window.__STATE__ = st; });
-});
+
+  const socket = connectRealtime();
+  bindChat(socket);
+  bindActions(socket);
+
+  socket.on("state", (st)=>{
+    renderOnline(st.online);
+    renderHistory(st.duel.round);
+  });
 </script>
 </body>
 </html>
